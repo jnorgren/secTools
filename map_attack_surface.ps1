@@ -1,53 +1,68 @@
 [CmdletBinding()]
 param (
-    [Parameter()]
+    [Parameter(Mandatory)]
     [string[]]$domains,
 
     [Parameter()]
-    [bool]$map_ip_space
+    [switch]$map_ip_space = $false
 )
 
 Import-Module -Name DnsClient
 
-
 function domain_enum {
     [CmdletBinding()]
     param (
-        [Parameter()]
+        [Parameter(Mandatory)]
         [string]$domain
     )
-    $crt_sh = "https://crt.sh/?dNSName=%25.$domain&output=json"
-    $results = Invoke-RestMethod -Uri $crt_sh
-    $domain_list = $($results.name_value)
-    $domain_list = ($domain_list.Replace("*.", "")).trim() | Select-Object -Unique
-    return $domain_list
+    Begin {
+        $crt_sh_base = "https://crt.sh/?dNSName=%25."
+        $output_format = "&output=json"
+    }
+    Process {
+        try {
+            $crt_sh = "$crt_sh_base$domain$output_format"
+            $results = Invoke-RestMethod -Uri $crt_sh
+            $domain_list = $results.common_name.Replace("*.", "").Trim() | Select-Object -Unique
+            return $domain_list
+        } catch {
+            Write-Error "Error retrieving data for domain $($domain): $_"
+        }
+    }
+    End {}
 }
 
 function enum_ip_space {
     [CmdletBinding()]
     param (
-        [Parameter(Mandatory = $true)]
+        [Parameter(Mandatory)]
         [string[]]$domain_list
     )
-    $IPs = @()
-    $counter = 0
-    foreach ($name in $domain_list) {
-        $counter++
-        Write-Progress -Activity 'Enumerating Public IP Space from domain list...' -PercentComplete (($counter / $domain_list.count) * 100)
-        $IPs += ((Resolve-DnsName -Name $name -ErrorAction SilentlyContinue -QuickTimeout -Type A).IP4Address)
+    Begin {
+        $counter = 0
+        $items = @{}
     }
-    $ipSpace = $IPs | Select-Object -Unique
-    return $ipSpace
+    Process {
+        foreach ($name in $domain_list) {
+            $counter++
+            Write-Progress -Activity 'Enumerating Public IP Space from domain list...' -PercentComplete (($counter / $domain_list.count) * 100)
+            $dns_response = ((Resolve-DnsName -Name $name -Type A -ErrorAction SilentlyContinue -QuickTimeout).IPAddress)
+            if ($dns_response) {
+                $items.Add($name, $dns_response)
+            }
+        }
+    }
+    End {
+        return $items
+    }
 }
 
-$domain_list = @()
-foreach($domain in $domains) {
-    $domain_list += domain_enum -domain $domain  
+$domain_list = foreach ($domain in $domains) {
+    domain_enum -domain $domain
 }
+
 $domain_list
 
-if($map_ip_space -eq $true) {
+if ($map_ip_space) {
     enum_ip_space -domain_list $domain_list
 }
-
-
