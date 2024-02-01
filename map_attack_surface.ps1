@@ -40,19 +40,41 @@ function enum_ip_space {
     )
     Begin {
         $counter = 0
-        $items = @{}
+        $items = @()
     }
     Process {
         foreach ($name in $domain_list) {
             $counter++
             Write-Progress -Activity 'Enumerating Public IP Space from domain list...' -PercentComplete (($counter / $domain_list.count) * 100)
-            $dns_response = ((Resolve-DnsName -Name $name -Type A -ErrorAction SilentlyContinue -QuickTimeout).IPAddress)
-            if ($dns_response) {
-                $items.Add($name, $dns_response)
+            $dns_responses = Resolve-DnsName -Name $name -ErrorAction SilentlyContinue -QuickTimeout
+            foreach ($response in $dns_responses) {
+                if ($response.QueryType -eq 'CNAME') {
+                    $item = New-Object PSObject -Property @{
+                        Domain = $name
+                        CNAME = $($response.NameHost)
+                        IPAddress = ''
+                    }
+                    $items += $item
+                } elseif ($response.QueryType -eq 'A') {
+                    $item = New-Object PSObject -Property @{
+                        Domain = $($response.Name)
+                        CNAME = ''
+                        IPAddress = $($response.IPAddress)
+                    }
+                    $items += $item
+                } elseif ($response.QueryType -eq 'AAAA') {
+                    $item = New-Object PSObject -Property @{
+                        Domain = $($response.Name)
+                        CNAME = ''
+                        IPAddress = $($response.IP6Address)
+                    }
+                    $items += $item
+                }
             }
         }
     }
     End {
+        $items | Format-Table -Property Domain, CNAME, IPAddress -AutoSize
         return $items
     }
 }
@@ -64,5 +86,6 @@ $domain_list = foreach ($domain in $domains) {
 $domain_list
 
 if ($map_ip_space) {
-    enum_ip_space -domain_list $domain_list
+    $results = enum_ip_space -domain_list $domain_list
+    $results | Select-Object -Property Domain, CNAME, IPAddress
 }
